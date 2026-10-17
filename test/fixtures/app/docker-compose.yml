@@ -1,0 +1,12 @@
+services:
+  web:
+    build: .
+    env_file: .env
+    environment:
+      - NODE_ENV=production
+      - SENTRY_DSN
+      - IMAGE_TAG=${IMAGE_TAG:-latest}
+      - SMTP_HOST=${SMTP_HOST}
+  worker:
+    image: app:${IMAGE_TAG:-latest}
+    env_file: [worker.env]

@@ -1,0 +1,3 @@
+FROM node:22-alpine
+ARG BUILD_SHA
+ENV LOG_LEVEL=info PORT=3000

@@ -1,0 +1,11 @@
+name: deploy
+on: push
+env:
+  REGISTRY: ghcr.io
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo ${{ secrets.DOCKERHUB_TOKEN }} ${{ secrets.GITHUB_TOKEN }} ${{ vars.DEPLOY_HOST }}
+        env:
+          SSH_KEY: ${{ secrets.SSH_KEY }}

@@ -1,0 +1,60 @@
+{
+  "name": "@tirthlabs/env-drift",
+  "version": "1.0.0",
+  "description": "Find environment variables that are missing, undocumented, unused or leaking to the browser, across code, .env files, Docker, docker compose, GitHub Actions and Kubernetes. Works in CI.",
+  "type": "module",
+  "bin": {
+    "env-drift": "bin/cli.js"
+  },
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./scan": "./src/scan.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18.17"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "yaml": "^2.5.1"
+  },
+  "keywords": [
+    "env",
+    "dotenv",
+    "environment-variables",
+    "env-example",
+    "devops",
+    "ci",
+    "docker-compose",
+    "github-actions",
+    "kubernetes",
+    "secrets",
+    "linter",
+    "nextjs",
+    "vite",
+    "django",
+    "config"
+  ],
+  "author": "Tirth Parikh (https://tirthparikh.com)",
+  "homepage": "https://tirthparikh.com/tools/env-drift/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tirthkparikh/env-drift.git"
+  },
+  "bugs": {
+    "url": "https://github.com/tirthkparikh/env-drift/issues"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  }
+}
