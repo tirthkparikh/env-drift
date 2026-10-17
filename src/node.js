@@ -1,7 +1,7 @@
 // Node-side helpers: read a project from disk, check GitHub, print the report.
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
-import { analyze, fileKind } from './scan.js';
+import { analyze, fileKind, normalPath, composeEnvFiles } from './scan.js';
 
 const SKIP_DIRS = new Set(['node_modules', '.git', '.hg', '.svn', 'dist', 'build', 'out', '.next', '.nuxt', '.svelte-kit', '.output', '.turbo', '.vercel', '.netlify',
   'coverage', '.nyc_output', 'vendor', 'venv', '.venv', '__pycache__', '.mypy_cache', '.pytest_cache', '.tox', 'target', 'obj', '.gradle', '.idea', '.vscode', '.cache', 'tmp', '.terraform', 'storybook-static']);
@@ -9,6 +9,7 @@ const SKIP_DIRS = new Set(['node_modules', '.git', '.hg', '.svn', 'dist', 'build
 /** Read every relevant file under root. Returns [{ path, content }] with forward-slash relative paths. */
 export async function readProject(root, { exclude = [], maxFiles = 20000, maxBytes = 1_000_000 } = {}) {
   const files = [];
+  exclude = exclude.map(p => (p.startsWith('*.') ? p : normalPath(p)));
   const excluded = rel => exclude.some(p => rel === p || rel.startsWith(p.replace(/\/?$/, '/')) || (p.startsWith('*.') && rel.endsWith(p.slice(1))));
   async function walk(dir) {
     let entries;
@@ -32,6 +33,19 @@ export async function readProject(root, { exclude = [], maxFiles = 20000, maxByt
     }
   }
   await walk(root);
+  // compose env_file entries often live in hidden folders (.envs/.production/.django) that the walk skips
+  const have = new Set(files.map(f => f.path));
+  for (const f of files.filter(f => fileKind(f.path) === 'compose')) {
+    for (const rel of composeEnvFiles(f.path, f.content)) {
+      if (have.has(rel) || rel.startsWith('..') || excluded(rel)) continue;
+      try {
+        const full = join(root, rel);
+        if ((await stat(full)).size > maxBytes) continue;
+        files.push({ path: rel, content: await readFile(full, 'utf8') });
+        have.add(rel);
+      } catch {}
+    }
+  }
   return files;
 }
 
@@ -104,7 +118,7 @@ export function formatReport(report, { color = true, verbose = false } = {}) {
     const width = Math.min(34, Math.max(...items.map(i => i.name.length)) + 2);
     for (const i of items) {
       const where = i.where.slice(0, 3).join(', ') + (i.where.length > 3 ? ` +${i.where.length - 3} more` : '');
-      lines.push(`  ${i.name.padEnd(width)}${c(90, where)}`);
+      lines.push(i.name.length + 2 > width ? `  ${i.name}\n  ${" ".repeat(width)}${c(90, where)}` : `  ${i.name.padEnd(width)}${c(90, where)}`);
       if (verbose || ['exposed', 'secret-in-example', 'ci-secret-missing', 'empty', 'env-file-missing'].includes(type)) lines.push(`  ${' '.repeat(width)}${c(90, i.message)}`);
     }
     lines.push('');

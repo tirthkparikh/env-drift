@@ -60,7 +60,8 @@ try {
   }
   if (f.fix) {
     const additions = exampleAdditions(report);
-    const target = join(root, report.exampleFiles[0] ?? '.env.example');
+    // the project-root example file; a nested one (apps/web/.env.example) belongs to that sub-project
+    const target = join(root, report.exampleFiles.find(p => !p.includes('/')) ?? '.env.example');
     if (additions) {
       let existing = '';
       try { existing = await readFile(target, 'utf8'); } catch {}
@@ -68,7 +69,7 @@ try {
       else await writeFile(target, `# Environment variables for this project. Copy to .env and fill in.\n\n${additions}\n`);
       if (!f.json) console.log(`\x1b[32m✔\x1b[0m updated ${target.replace(root + '/', '')}\n`);
       // re-scan so the report reflects the fix
-      Object.assign(report, await scanProject(root, { ignore: [...(rc.ignore ?? []), ...list(f.ignore)], exclude: [...(rc.exclude ?? []), ...list(f.exclude)] }));
+      Object.assign(report, await scanProject(root, { ignore: [...(rc.ignore ?? []), ...list(f.ignore)], exclude: [...(rc.exclude ?? []), ...list(f.exclude)], strict: f.strict }));
     } else if (!f.json) console.log('Nothing to add to the example file.\n');
   }
   if (f.json) console.log(JSON.stringify(report, null, 2));

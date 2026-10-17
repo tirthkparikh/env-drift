@@ -41,8 +41,8 @@ test('fixture project: every kind of drift is found', async () => {
   assert.deepEqual(byType(r, 'env-file-missing'), ['worker.env']);
   const undoc = r.issues.filter(i => i.type === 'undocumented');
   assert.deepEqual(undoc.filter(i => i.level === 'warn').map(i => i.name).sort(), ['REDIS_URL', 'VITE_STRIPE_SECRET_KEY']);
-  // defaults in code + defined elsewhere (Dockerfile, k8s, compose) are only notes
-  assert.deepEqual(undoc.filter(i => i.level === 'info').map(i => i.name).sort(), ['CELERY_BROKER_URL', 'FEATURE_FLAGS', 'IMAGE_TAG', 'LOG_LEVEL', 'PORT']);
+  // values that Docker, k8s or Compose provide don't need an .env.example entry
+  assert.deepEqual(undoc.filter(i => i.level === 'info').map(i => i.name).sort(), []);
   // never flagged: platform vars, Vite built-ins, fully covered vars
   for (const n of ['NODE_ENV', 'MODE', 'DATABASE_URL', 'GITHUB_TOKEN']) assert.ok(!r.issues.some(i => i.name === n), n);
   assert.deepEqual(r.ci, { secrets: ['DOCKERHUB_TOKEN', 'SSH_KEY'], variables: ['DEPLOY_HOST'] });
@@ -62,8 +62,9 @@ test('languages: Go, Ruby, PHP, Rust, Java, C#, Elixir, Deno, Bun', () => {
     { path: 'mod.ts', content: 'Deno.env.get("APP_DENO_VAR"); Bun.env.BUN_VAR_X' },
   ];
   const r = analyze(files);
-  assert.deepEqual(byType(r, 'missing'), ['APP_DENO_VAR', 'CS_VAR', 'EX_VAR', 'GO_VAR', 'GO_VAR2', 'JAVA_VAR', 'PHP_VAR', 'PHP_VAR2', 'RB_VAR', 'RS_BUILD', 'RS_VAR'].sort());
-  // BUN_ prefix is treated as platform; defaults are not errors
+  assert.deepEqual(byType(r, 'missing'), ['APP_DENO_VAR', 'CS_VAR', 'EX_VAR', 'GO_VAR', 'JAVA_VAR', 'PHP_VAR', 'PHP_VAR2', 'RB_VAR', 'RS_BUILD', 'RS_VAR'].sort());
+  // BUN_ prefix is treated as platform; defaults and LookupEnv (which reports "not set") are not errors
+  assert.ok(!r.issues.some(i => i.name === 'GO_VAR2' && i.level === 'error'));
   assert.ok(!r.issues.some(i => i.name === 'RB_OPT' && i.level === 'error'));
   assert.ok(!r.issues.some(i => i.name === 'LARAVEL_VAR' && i.level === 'error'));
 });

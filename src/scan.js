@@ -9,17 +9,21 @@ const UPPER = '[A-Z_][A-Z0-9_]*';
 // Variables provided by the OS, shells, CI or hosting platforms.
 const PLATFORM = [
   /^(PATH|HOME|PWD|OLDPWD|USER|USERNAME|LOGNAME|SHELL|TERM|LANG|LC_\w+|TZ|HOSTNAME|TMPDIR|TEMP|TMP|EDITOR|CI|NODE_ENV|NODE_OPTIONS|NODE_DEBUG|FORCE_COLOR|NO_COLOR|COLORTERM|PYTHONPATH|PYTHONUNBUFFERED|VIRTUAL_ENV|JAVA_HOME|GOPATH|GOROOT|APPDATA|LOCALAPPDATA|USERPROFILE|COMSPEC|SYSTEMROOT|WINDIR|XDG_\w+|DISPLAY|SSH_AUTH_SOCK)$/,
-  /^(GITHUB_|RUNNER_|ACTIONS_|GITLAB_|CI_|BITBUCKET_|CIRCLE|TRAVIS|BUILDKITE|JENKINS_|npm_|VERCEL|NEXT_RUNTIME|NETLIFY|RENDER|RAILWAY_|FLY_|HEROKU_|DYNO|AWS_LAMBDA_|AWS_EXECUTION_ENV|LAMBDA_TASK_ROOT|K_SERVICE|K_REVISION|FUNCTION_TARGET|KUBERNETES_|CF_PAGES|DENO_|BUN_)/,
+  /^(GITHUB_(ACTIONS|ACTOR|ACTOR_ID|API_URL|BASE_REF|ENV|EVENT_NAME|EVENT_PATH|GRAPHQL_URL|HEAD_REF|JOB|OUTPUT|PATH|REF|REF_NAME|REF_PROTECTED|REF_TYPE|REPOSITORY|REPOSITORY_ID|REPOSITORY_OWNER|REPOSITORY_OWNER_ID|RETENTION_DAYS|RUN_ATTEMPT|RUN_ID|RUN_NUMBER|SERVER_URL|SHA|STATE|STEP_SUMMARY|TOKEN|TRIGGERING_ACTOR|WORKFLOW|WORKFLOW_REF|WORKFLOW_SHA|WORKSPACE)|GITLAB_(CI|USER_\w+|FEATURES)|HTTPS?_PROXY|NO_PROXY|ALL_PROXY|https?_proxy|no_proxy|all_proxy)$/,
+  /^(RUNNER_|ACTIONS_|CI_|BITBUCKET_|CIRCLE_|CIRCLECI$|TRAVIS(_|$)|BUILDKITE(_|$)|JENKINS_|npm_|VERCEL(_|$)|NEXT_RUNTIME$|NETLIFY(_|$)|RENDER(_|$)|RAILWAY_|FLY_|HEROKU_|DYNO$|AWS_LAMBDA_|AWS_EXECUTION_ENV$|LAMBDA_TASK_ROOT$|K_SERVICE$|K_REVISION$|FUNCTION_TARGET$|KUBERNETES_|CF_PAGES|DENO_|BUN_)/,
 ];
 const VITE_BUILTIN = new Set(['MODE', 'DEV', 'PROD', 'SSR', 'BASE_URL']);
 export const isPlatform = name => PLATFORM.some(re => re.test(name));
 
 const PUBLIC_PREFIX = /^(NEXT_PUBLIC_|VITE_|REACT_APP_|PUBLIC_|NUXT_PUBLIC_|EXPO_PUBLIC_|GATSBY_|VUE_APP_|STORYBOOK_)/;
-const SECRETY = /(SECRET|PRIVATE|PASSWORD|PASSWD|TOKEN|API_?KEY|ACCESS_?KEY|SERVICE_?ROLE|CLIENT_?SECRET|WEBHOOK_?SECRET|DATABASE_URL|DB_URL|CREDENTIALS)/;
-// Keys that are meant to be public even though they contain "KEY"
-const PUBLIC_OK = /(PUBLISHABLE|PUBLIC_?KEY|ANON_?KEY|SITE_?KEY|MEASUREMENT_ID|_DSN$)/;
+const SECRETY_RE = /(SECRET|PRIVATE|PASSWORD|PASSWD|(^|_)PWD$|(^|_)PASS$|TOKEN|API_?KEY|ACCESS_?KEY|SERVICE_?ROLE|CLIENT_?SECRET|WEBHOOK_?SECRET|DATABASE_URL|DB_URL|CREDENTIALS)/;
+// "TOKEN_EXPIRY", "PASSWORD_MIN_LENGTH", "API_KEY_HEADER": settings about a secret, not the secret itself
+const ABOUT_A_SECRET = /(SECRET|PASSWORD|TOKEN|KEY)_(EXPIRY|EXPIRES|EXPIRES_IN|TTL|TIMEOUT|LIFETIME|DURATION|AGE|HEADER|HEADER_NAME|NAME|FIELD|PARAM|URL|ENDPOINT|PATH|LENGTH|MIN_LENGTH|MAX_LENGTH|PREFIX|TYPE|ISSUER|AUDIENCE|ALGORITHM|ENABLED|REQUIRED|FILE)$/;
+const SECRETY = { test: name => SECRETY_RE.test(name) && !ABOUT_A_SECRET.test(name) };
+// Keys that are meant to be public even though they contain "KEY" or "TOKEN"
+const PUBLIC_OK = /(PUBLISHABLE|PUBLIC_?KEY|ANON_?KEY|SITE_?KEY|MEASUREMENT_ID|_DSN$|FIREBASE_API_KEY|FIREBASE_\w*KEY|ALGOLIA_SEARCH(_ONLY)?_(API_)?KEY|MAPBOX_(ACCESS_)?TOKEN|(GOOGLE_)?MAPS_(JS_)?API_KEY|RECAPTCHA_\w*KEY|POSTHOG_(API_)?KEY|SEGMENT_WRITE_KEY|AMPLITUDE_API_KEY|MIXPANEL_TOKEN|ROLLBAR_CLIENT_TOKEN|DATADOG_CLIENT_TOKEN|DD_CLIENT_TOKEN|BUGSNAG_API_KEY|LOGROCKET_\w*|HCAPTCHA_SITE_KEY|TURNSTILE_SITE_KEY|PUSHER_(APP_)?KEY|ABLY_\w*SUBSCRIBE\w*|CLERK_FRONTEND_API)/;
 
-const CODE_EXT = /\.(m?[jt]sx?|cjs|cts|mts|vue|svelte|astro|py|go|rb|php|rs|java|kt|kts|scala|cs|ex|exs)$/;
+const CODE_EXT = /\.(m?[jt]sx?|cjs|cts|mts|vue|svelte|astro|py|go|rb|php|rs|java|kt|kts|scala|cs|ex|exs|prisma)$/;
 
 export const fileKind = path => {
   const base = path.split('/').pop();
@@ -35,11 +39,22 @@ export const fileKind = path => {
 
 export const isExample = path => /\.(example|sample|template|dist|defaults)$/i.test(path) || /(^|\/)example\.env$/i.test(path) || /(^|\/)\.env\.(example|sample|template)\./i.test(path);
 
-const lineAt = (text, index) => {
-  let n = 1;
-  for (let i = 0; i < index && i < text.length; i++) if (text.charCodeAt(i) === 10) n++;
-  return n;
-};
+// Line numbers by binary search over newline offsets (scanning from the start for every match is quadratic).
+// The offsets of the last file are cached, since matches come file by file.
+let lastText = null, lastStarts = null;
+function lineStarts(text) {
+  if (text === lastText) return lastStarts;
+  const starts = [0];
+  for (let i = text.indexOf('\n'); i >= 0; i = text.indexOf('\n', i + 1)) starts.push(i + 1);
+  lastText = text; lastStarts = starts;
+  return starts;
+}
+const lineAt = (text, index) => lineFrom(lineStarts(text), index);
+function lineFrom(starts, index) {
+  let lo = 0, hi = starts.length - 1;
+  while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (starts[mid] <= index) lo = mid; else hi = mid - 1; }
+  return lo + 1;
+}
 
 // ---------- code ----------
 
@@ -48,6 +63,7 @@ const CODE_PATTERNS = [
   { re: new RegExp(`process\\.env\\.(${NAME})`, 'g'), js: true },
   { re: new RegExp(`process\\.env\\[\\s*['"\`](${NAME})['"\`]\\s*\\]`, 'g'), js: true },
   { re: new RegExp(`import\\.meta\\.env\\.(${NAME})`, 'g'), js: true, vite: true },
+  { re: new RegExp(`import\\.meta\\.env\\[\\s*['"\`](${NAME})['"\`]\\s*\\]`, 'g'), js: true, vite: true },
   { re: new RegExp(`Deno\\.env\\.get\\(\\s*['"](${NAME})['"]`, 'g'), js: true },
   { re: new RegExp(`Bun\\.env\\.(${NAME})`, 'g'), js: true },
   { re: new RegExp(`os\\.environ\\[\\s*['"](${NAME})['"]\\s*\\]`, 'g'), py: true, required: true },
@@ -55,16 +71,25 @@ const CODE_PATTERNS = [
   { re: new RegExp(`os\\.getenv\\(\\s*['"](${NAME})['"]\\s*(,)?`, 'g'), py: true, defaultGroup: 2, soft: true },
   { re: new RegExp(`\\benv(?:\\.(?:str|bool|int|float|list|dict|json|url|db|db_url|cache|cache_url|email|email_url|search_url|path|tuple|decimal))?\\(\\s*['"](${UPPER})['"]\\s*(,\\s*default\\s*=|,)?`, 'g'), py: true, php: true, defaultGroup: 2 },
   { re: new RegExp(`\\bconfig\\(\\s*['"](${UPPER})['"]\\s*(,\\s*default\\s*=)?`, 'g'), py: true, defaultGroup: 2 },
-  { re: new RegExp(`os\\.(?:Getenv|LookupEnv)\\(\\s*"(${NAME})"`, 'g'), go: true },
+  { re: new RegExp(`os\\.Getenv\\(\\s*"(${NAME})"`, 'g'), go: true },
+  { re: new RegExp(`os\\.LookupEnv\\(\\s*"(${NAME})"`, 'g'), go: true, optional: true },  // returns (value, ok): the caller handles "not set"
+  { re: new RegExp(`\\benv\\(\\s*"(${NAME})"\\s*\\)`, 'g'), prisma: true },
   { re: new RegExp(`ENV\\[\\s*['"](${NAME})['"]\\s*\\]`, 'g'), rb: true },
   { re: new RegExp(`ENV\\.fetch\\(\\s*['"](${NAME})['"]\\s*(,)?`, 'g'), rb: true, defaultGroup: 2 },
   { re: new RegExp(`getenv\\(\\s*['"](${NAME})['"]`, 'g'), php: true },
+  // presence checks: the code handles "not set", so these reads are optional
+  { re: new RegExp(`ENV\\.(?:key\\?|has_key\\?|include\\?|member\\?)\\(?\\s*['"](${NAME})['"]`, 'g'), rb: true, optional: true },
+  { re: new RegExp(`['"](${NAME})['"]\\s+(?:not\\s+)?in\\s+os\\.environ`, 'g'), py: true, optional: true },
+  { re: new RegExp(`['"\`](${NAME})['"\`]\\s+in\\s+process\\.env`, 'g'), js: true, optional: true },
+  { re: new RegExp(`process\\.env\\.hasOwnProperty\\(\\s*['"\`](${NAME})['"\`]`, 'g'), js: true, optional: true },
   { re: new RegExp(`\\$_(?:ENV|SERVER)\\[\\s*['"](${UPPER})['"]\\s*\\]`, 'g'), php: true },
   { re: new RegExp(`env::var(?:_os)?\\(\\s*"(${NAME})"`, 'g'), rs: true },
   { re: new RegExp(`(?:std::)?env!\\(\\s*"(${NAME})"`, 'g'), rs: true, required: true },
   { re: new RegExp(`System\\.getenv\\(\\s*"(${NAME})"`, 'g'), jvm: true },
+  { re: new RegExp(`getenv\\(\\)\\.getOrDefault\\(\\s*"(${NAME})"`, 'g'), jvm: true, optional: true },
   { re: new RegExp(`Environment\\.GetEnvironmentVariable\\(\\s*"(${NAME})"`, 'g'), cs: true },
-  { re: new RegExp(`System\\.(?:get_env|fetch_env!?)\\(\\s*"(${NAME})"`, 'g'), ex: true },
+  { re: new RegExp(`System\\.get_env\\(\\s*"(${NAME})"\\s*(,)?`, 'g'), ex: true, defaultGroup: 2 },
+  { re: new RegExp(`System\\.fetch_env!?\\(\\s*"(${NAME})"`, 'g'), ex: true },
 ];
 const LANG_OF = path => {
   if (/\.(m?[jt]sx?|cjs|cts|mts|vue|svelte|astro)$/.test(path)) return 'js';
@@ -76,12 +101,73 @@ const LANG_OF = path => {
   if (/\.(java|kt|kts|scala)$/.test(path)) return 'jvm';
   if (/\.cs$/.test(path)) return 'cs';
   if (/\.exs?$/.test(path)) return 'ex';
+  if (/\.prisma$/.test(path)) return 'prisma';
   return null;
 };
 
-function scanCode(path, text, out) {
+// Comment syntax per language: [line comment starts, block comments?]
+const COMMENTS = { js: ['//', true], go: ['//', true], rs: ['//', true], jvm: ['//', true], cs: ['//', true], php: ['//#', true], py: ['#', false], rb: ['#', false], ex: ['#', false], prisma: ['//', false] };
+
+/**
+ * Blank out comments and strings that can't hold an env lookup, keeping offsets and newlines,
+ * so "// process.env.OLD" or "see process.env.X in the docs" don't count as reads.
+ * Strings that are just a name ("API_KEY", used as ENV["API_KEY"]) and template or
+ * interpolated strings are kept, because env lookups live inside those.
+ */
+export function maskCode(text, lang) {
+  const [line, block] = COMMENTS[lang] ?? ['//', true];
+  const out = text.split('');
+  const blank = (a, b) => { for (let k = a; k < b; k++) if (out[k] !== '\n') out[k] = ' '; };
+  const n = text.length;
+  let i = 0;
+  while (i < n) {
+    const c = text[i];
+    if (block && c === '/' && text[i + 1] === '*') {
+      const end = text.indexOf('*/', i + 2);
+      const stop = end < 0 ? n : end + 2;
+      blank(i, stop); i = stop; continue;
+    }
+    if ((line.includes('//') && c === '/' && text[i + 1] === '/' && text[i - 1] !== ':') || (line.includes('#') && c === '#' && !(lang === 'rb' && text[i + 1] === '{'))) {
+      const end = text.indexOf('\n', i);
+      const stop = end < 0 ? n : end;
+      blank(i, stop); i = stop; continue;
+    }
+    if (lang === 'py' && (text.startsWith('"""', i) || text.startsWith("'''", i))) {
+      const q = text.slice(i, i + 3);
+      const end = text.indexOf(q, i + 3);
+      const stop = end < 0 ? n : end + 3;
+      const prefix = text[i - 1];
+      if (!/[fF]/.test(prefix ?? '')) blank(i + 3, stop - 3);
+      i = stop; continue;
+    }
+    if (c === '"' || (c === "'" && lang !== 'rs') || (c === '`' && lang !== 'js')) {  // Rust ' is a char or a lifetime
+      // single-line string; JS template literals are left alone (they often hold ${process.env.X})
+      let j = i + 1;
+      while (j < n && text[j] !== c && text[j] !== '\n') j += text[j] === '\\' ? 2 : 1;
+      const body = text.slice(i + 1, j);
+      const keep = /^[A-Za-z_][A-Za-z0-9_]*$/.test(body) || /\$\{|#\{|\{[^}]*\}/.test(body) || /[fF]$/.test(text[i - 1] ?? '');
+      if (!keep) blank(i + 1, j);
+      i = j + 1; continue;
+    }
+    i++;
+  }
+  return out.join('');
+}
+
+// After the lookup: a default value, or a check that treats "not set" as a valid state.
+const DEFAULT_AFTER = /^\s*\)?\s*(\|\||\?\?|\bor\b|\?:|\.unwrap_or(_default|_else)?\b|\.or_else\b|\.ok\(\)|\.is_ok\(\)|\.is_err\(\)|\.getOrElse\b|\.orElse\b)/;
+const CHECK_AFTER = /^\s*\)?\s*(&\.|===?|!==?|&&|\?(?![.?:])|\.present\?|\.blank\?|\.nil\?|\.presence\b|\.to_s\.(empty|present)\?|\.in\?|\bis\s+(not\s+)?None\b|\bin\s*\(|\.(includes|startsWith|endsWith|toLowerCase|lower|casefold)\b)/;
+const CHECK_BEFORE = /(\bif\s+[\w,\s]+:?=\s*|\bif\s*\(?\s*!?\s*|\bunless\s+|\belsif\s+|\bwhen\s+|\bif\s+not\s+|!\s*|&&\s*|\|\|\s*|\?\s*)$/;
+const WRITE_AFTER = /^\s*(\]\s*)?(\|\|=|\?\?=|=(?![=~>]))/;
+
+function scanCode(path, raw, realOut) {
   const lang = LANG_OF(path);
   if (!lang) return;
+  const text = maskCode(raw, lang);
+  // Collect this file's reads first: if a file checks a variable anywhere (`... if ENV['X']`,
+  // `if (process.env.X)`), its other reads of X in that file are guarded too.
+  const reads = [];
+  const out = { ...realOut, use: (name, at) => reads.push([name, at]) };
   for (const p of CODE_PATTERNS) {
     if (!p[lang]) continue;
     p.re.lastIndex = 0;
@@ -89,8 +175,12 @@ function scanCode(path, text, out) {
     while ((m = p.re.exec(text))) {
       const name = m[1];
       if (p.vite && VITE_BUILTIN.has(name)) continue;
-      const after = text.slice(m.index + m[0].length, m.index + m[0].length + 12);
-      const hasDefault = p.required ? false : p.defaultGroup ? !!m[p.defaultGroup] : /^\s*(\|\||\?\?|or\b)/.test(after);
+      const end = m.index + m[0].length;
+      const after = text.slice(end, end + 60);
+      if (WRITE_AFTER.test(after)) continue;  // process.env.X = …, ENV["X"] = … sets it, doesn't need it
+      const before = text.slice(Math.max(0, m.index - 20), m.index);
+      const rubyBlock = lang === 'rb' && /^\s*\)\s*(\{|do\b)/.test(after);  // ENV.fetch("X") { default }
+      const hasDefault = !p.required && (p.optional || (p.defaultGroup && !!m[p.defaultGroup]) || rubyBlock || DEFAULT_AFTER.test(after) || CHECK_AFTER.test(after) || CHECK_BEFORE.test(before));
       out.use(name, { file: path, line: lineAt(text, m.index), kind: 'code', optional: hasDefault, soft: !!p.soft && !hasDefault });
     }
   }
@@ -123,14 +213,21 @@ function scanCode(path, text, out) {
     if (/process\.env\[\s*(?!['"`])[^\]]/.test(text) || /import\.meta\.env\[\s*(?!['"`])/.test(text)) out.dynamic(path);
   }
   if (lang === 'py' && /os\.environ\[\s*(?!['"])\w/.test(text)) out.dynamic(path);
+  const guarded = new Set(reads.filter(([, at]) => at.optional).map(([name]) => name));
+  for (const [name, at] of reads) realOut.use(name, guarded.has(name) ? { ...at, optional: true, soft: false } : at);
 }
 
 // ---------- dotenv ----------
 
-export function parseDotenv(text) {
+export function parseDotenv(text, { commented = false } = {}) {
   const entries = [];
   const lines = text.split(/\r?\n/);
   for (let i = 0; i < lines.length; i++) {
+    if (commented) {
+      // "# OPTIONAL_THING=value" in an example file documents an optional variable
+      const c = lines[i].match(new RegExp(`^\\s*#\\s*(?:export\\s+)?(${UPPER})=`));
+      if (c) { entries.push({ name: c[1], value: '', line: i + 1, commented: true }); continue; }
+    }
     const m = lines[i].match(new RegExp(`^\\s*(?:export\\s+)?(${NAME})\\s*=\\s*(.*)$`));
     if (!m) continue;
     let value = m[2];
@@ -155,8 +252,10 @@ const LOOKS_SECRET = [
 ];
 const PLACEHOLDER = /^(|changeme|change-me|change_me|xxx+|your[-_ ].*|<.*>|\.\.\.|todo|none|null|example|test|dummy|placeholder|secret|password|sk_test_.*|pk_test_.*|localhost.*|http:\/\/localhost.*|postgres(ql)?:\/\/(postgres|user|username):(postgres|password|pass)@.*|redis:\/\/localhost.*|true|false|\d+)$/i;
 const PLACEHOLDER_WORDS = /(replace[-_ ]?me|change[-_ ]?me|changeit|your[-_]|example|xxxx|placeholder|dummy|fake|<[^>]+>|\{\{)/i;
+// postgres://root:root@localhost:5432/app or redis://:pw@redis:6379 in an example file is a local dev default
+const LOCAL_URL = /^[a-z][a-z0-9+.-]*:\/\/[^@/\s]*@(localhost|127\.0\.0\.1|0\.0\.0\.0|host\.docker\.internal|\[::1\]|[a-z][a-z0-9_-]*)(:\d+)?(\/|$|\?)/i;
 export function looksLikeRealSecret(name, value) {
-  if (!value || PLACEHOLDER.test(value) || PLACEHOLDER_WORDS.test(value)) return false;
+  if (!value || PLACEHOLDER.test(value) || PLACEHOLDER_WORDS.test(value) || LOCAL_URL.test(value)) return false;
   if (LOOKS_SECRET.some(re => re.test(value))) return true;
   // long random-looking values in secret-named keys
   return SECRETY.test(name) && !PUBLIC_OK.test(name) && value.length >= 24 && /[A-Za-z]/.test(value) && /\d/.test(value) && !/\s/.test(value) && !/^https?:\/\//.test(value);
@@ -190,7 +289,7 @@ function findLine(text, needle) {
 
 function parseYamlDocs(text) {
   try {
-    return YAML.parseAllDocuments(text).map(d => d.toJS({ maxAliasCount: 100 })).filter(Boolean);
+    return YAML.parseAllDocuments(text, { logLevel: 'error' }).map(d => d.toJS({ maxAliasCount: 100 })).filter(Boolean);
   } catch { return null; }
 }
 
@@ -219,16 +318,22 @@ function scanCompose(path, text, out) {
 
 function scanDockerfile(path, text, out) {
   const lines = text.split(/\r?\n/);
-  lines.forEach((line, i) => {
+  for (let i = 0; i < lines.length; i++) {
+    const start = i;
+    let line = lines[i];
+    while (/\\\s*$/.test(line) && i + 1 < lines.length) line = line.replace(/\\\s*$/, ' ') + lines[++i];  // "\" continues the instruction
     let m = line.match(/^\s*ENV\s+(.+)$/i);
     if (m) {
       const body = m[1].trim();
-      const pairs = body.includes('=') ? [...body.matchAll(new RegExp(`(${NAME})=`, 'g'))].map(x => x[1]) : [body.split(/\s+/)[0]];
-      for (const k of pairs) out.define(k, { file: path, line: i + 1, kind: 'dockerfile' });
+      // KEY=value pairs, where value may be quoted and contain "=" or spaces; or the legacy "ENV KEY value" form
+      const pairs = new RegExp(`^${NAME}=`).test(body)
+        ? [...body.matchAll(new RegExp(`(?:^|\\s)(${NAME})=(?:"(?:[^"\\\\]|\\\\.)*"|'[^']*'|\\S*)`, 'g'))].map(x => x[1])
+        : [body.split(/\s+/)[0]];
+      for (const k of pairs) out.define(k, { file: path, line: start + 1, kind: 'dockerfile' });
     }
     m = line.match(new RegExp(`^\\s*ARG\\s+(${NAME})`, 'i'));
-    if (m) out.define(m[1], { file: path, line: i + 1, kind: 'dockerfile-arg' });
-  });
+    if (m) out.define(m[1], { file: path, line: start + 1, kind: 'dockerfile-arg' });
+  }
 }
 
 function scanActions(path, text, out) {
@@ -278,10 +383,51 @@ function scanYaml(path, text, out) {
 // ---------- analysis ----------
 
 /**
+ * Project-relative paths of the env_file entries in a compose file. Falls back to a line scan
+ * when the file isn't valid YAML (templated compose files, e.g. cookiecutter's {% if %} blocks).
+ */
+export function composeEnvFiles(path, content) {
+  const base = path.includes('/') ? path.slice(0, path.lastIndexOf('/') + 1) : '';
+  const refs = [];
+  const docs = parseYamlDocs(content);
+  if (docs) {
+    for (const doc of docs) for (const def of Object.values(doc?.services ?? {})) {
+      for (const f of [].concat(def?.env_file ?? [])) { const r = typeof f === 'string' ? f : f?.path; if (r) refs.push(r); }
+    }
+  } else {
+    const lines = content.split(/\r?\n/);
+    for (let i = 0; i < lines.length; i++) {
+      const m = lines[i].match(/^(\s*)env_file:\s*(\S.*)?$/);
+      if (!m) continue;
+      if (m[2] && !/^[|>[]/.test(m[2])) { refs.push(m[2].replace(/^['"]|['"]$/g, '')); continue; }
+      while (i + 1 < lines.length && /^\s*(-|path:|\{%)/.test(lines[i + 1])) {
+        const item = lines[++i].match(/^\s*-?\s*(?:path:\s*)?['"]?([^'"\s{%#]+)/);
+        if (item && item[1] !== 'required:') refs.push(item[1]);
+      }
+    }
+  }
+  return refs.map(r => normalPath(base + r));
+}
+
+/** "a/./b/../c" -> "a/c", no leading "./" */
+export function normalPath(p) {
+  const parts = [];
+  for (const seg of String(p).split('/')) {
+    if (seg === '' || seg === '.') continue;
+    if (seg === '..') parts.pop(); else parts.push(seg);
+  }
+  return parts.join('/');
+}
+
+// Read by libraries and tools rather than app code, so "nothing reads it" would be wrong
+const LIBRARY_READ = /^(TF_VAR_\w+|AWS_(ACCESS_KEY_ID|SECRET_ACCESS_KEY|SESSION_TOKEN|REGION|DEFAULT_REGION|PROFILE|ENDPOINT_URL\w*)|GOOGLE_APPLICATION_CREDENTIALS|GOOGLE_CLOUD_PROJECT|GCLOUD_PROJECT|FIRESTORE_EMULATOR_HOST|FIREBASE_\w+_EMULATOR_HOST|PUBSUB_EMULATOR_HOST|DATASTORE_EMULATOR_HOST|PG(HOST|PORT|USER|PASSWORD|DATABASE|SSLMODE)|MYSQL_(ROOT_PASSWORD|DATABASE|USER|PASSWORD)|POSTGRES_(USER|PASSWORD|DB)|SENTRY_(DSN|ENVIRONMENT|RELEASE|AUTH_TOKEN|ORG|PROJECT)|OTEL_\w+|NEW_RELIC_\w+|DD_\w+|DEBUG|NODE_TLS_REJECT_UNAUTHORIZED|PRISMA_\w+|COMPOSE_\w+|DOCKER_\w+)$/;
+
+/**
  * Analyse a project. files: [{ path, content }] with paths relative to the project root.
  * opts: { ignore: string[], strict: boolean }
  */
 export function analyze(files, opts = {}) {
+  files = files.map(f => ({ ...f, path: normalPath(f.path) }));
   const vars = new Map();  // name -> { uses: [], defs: [], examples: [] }
   const get = name => {
     if (!vars.has(name)) vars.set(name, { name, uses: [], defs: [], examples: [], dotenv: [] });
@@ -300,19 +446,23 @@ export function analyze(files, opts = {}) {
     envFile: (f, from) => envFileRefs.push({ file: f, from }),
   };
 
+  // Files named in a compose env_file (e.g. .envs/.production/.django) are dotenv files whatever their name
+  const envFilePaths = new Set();
+  for (const { path, content } of files) if (fileKind(path) === 'compose') for (const ref of composeEnvFiles(path, content)) envFilePaths.add(ref);
+
   let scanned = 0;
   for (const { path, content } of files) {
-    const kind = fileKind(path);
+    const kind = envFilePaths.has(normalPath(path)) ? 'dotenv' : fileKind(path);
     if (!kind) continue;
     scanned++;
     if (kind === 'code') scanCode(path, content, out);
     else if (kind === 'dotenv') {
       const example = isExample(path);
       (example ? exampleFiles : dotenvFiles).push(path);
-      for (const e of parseDotenv(content)) {
+      for (const e of parseDotenv(content, { commented: example })) {
         const v = get(e.name);
         if (example) {
-          v.examples.push({ file: path, line: e.line });
+          v.examples.push({ file: path, line: e.line, commented: !!e.commented });
           if (looksLikeRealSecret(e.name, e.value)) exampleSecrets.push({ name: e.name, file: path, line: e.line });
         } else {
           v.dotenv.push({ file: path, line: e.line, empty: e.value === '' });
@@ -347,7 +497,7 @@ export function analyze(files, opts = {}) {
       if (!defined && !documented) {
         if (requiredUses.length) add(envFromFiles.size || requiredUses.every(u => u.soft) ? 'warn' : 'error', requiredUses.every(u => u.soft) ? 'missing-soft' : 'missing', v.name, `read by the app but not set or documented anywhere${envFromFiles.size ? ' (may come from envFrom in Kubernetes)' : ''}`, requiredUses.map(fmt));
         else if (hasExample || opts.strict) add('info', 'missing-optional', v.name, 'read with a default value, but not documented', realUses.map(fmt));
-      } else if (!documented && hasExample) {
+      } else if (!documented && hasExample && !v.defs.length) {  // values from Docker, Compose, k8s or CI need no .env.example entry
         add(requiredUses.length ? 'warn' : 'info', 'undocumented', v.name, `${requiredUses.length ? '' : 'has a default, but is '}not in ${exampleFiles[0]}, so teammates and deploys won't know to set it`, [...realUses.slice(0, 3).map(fmt), ...v.dotenv.map(d => `set in ${fmt(d)}`)]);
       } else if (!documented && !hasExample && v.dotenv.length && requiredUses.length) {
         add('info', 'undocumented', v.name, 'only set in your local .env (there is no .env.example)', requiredUses.slice(0, 3).map(fmt));
@@ -356,7 +506,8 @@ export function analyze(files, opts = {}) {
       if (requiredUses.length && empty.length && empty.length === v.dotenv.length && !v.defs.length) add('warn', 'empty', v.name, 'required, but empty in your .env', empty.map(fmt));
     }
 
-    if (!used && (v.dotenv.length || documented)) {
+    const onlyCommented = !v.dotenv.length && v.examples.length && v.examples.every(e => e.commented);
+    if (!used && (v.dotenv.length || documented) && !LIBRARY_READ.test(v.name) && !onlyCommented) {
       const where = [...v.dotenv.map(fmt), ...v.examples.map(fmt)];
       add('info', 'unused', v.name, 'set or documented, but nothing reads it', where);
     }
@@ -371,8 +522,8 @@ export function analyze(files, opts = {}) {
   for (const ref of envFileRefs) {
     if (!ref.file) continue;
     const base = ref.from.includes('/') ? ref.from.slice(0, ref.from.lastIndexOf('/') + 1) : '';
-    const want = (base + ref.file).replace(/^\.\//, '').replace(/\/\.\//g, '/');
-    if (!files.some(f => f.path === want || f.path.endsWith('/' + ref.file.replace(/^\.\//, '')))) add('warn', 'env-file-missing', ref.file, `env_file in ${ref.from} not found (fine if it's created at deploy time)`, [ref.from]);
+    const want = normalPath(base + ref.file);
+    if (!files.some(f => normalPath(f.path) === want)) add('warn', 'env-file-missing', ref.file, `env_file in ${ref.from} not found (fine if it's created at deploy time)`, [ref.from]);
   }
 
   const ciNeeds = { secrets: [...ci.secret.keys()].sort(), variables: [...ci.variable.keys()].sort() };
