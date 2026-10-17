@@ -1,5 +1,7 @@
 # env-drift
 
+[![npm](https://img.shields.io/npm/v/@tirthlabs/env-drift?color=c2410c)](https://www.npmjs.com/package/@tirthlabs/env-drift) [![CI](https://github.com/tirthkparikh/env-drift/actions/workflows/ci.yml/badge.svg)](https://github.com/tirthkparikh/env-drift/actions/workflows/ci.yml) [![license](https://img.shields.io/npm/l/@tirthlabs/env-drift)](LICENSE) · [Live demo](https://tirthparikh.com/tools/env-drift/)
+
 **Find environment variables that are missing, undocumented, unused or leaking, before a deploy does.**
 
 ```bash
