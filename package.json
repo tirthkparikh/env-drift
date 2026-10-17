@@ -1,6 +1,6 @@
 {
   "name": "@tirthlabs/env-drift",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Find environment variables that are missing, undocumented, unused or leaking to the browser, across code, .env files, Docker, docker compose, GitHub Actions and Kubernetes. Works in CI.",
   "type": "module",
   "bin": {
