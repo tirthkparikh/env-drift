@@ -105,7 +105,7 @@ function scanCode(path, text, out) {
         else if (depth === 1) body += ch;
       }
       // keys at the top level of the env object: `key: value` or shorthand `key,`
-      const flat = body.replace(/\([^()]*\)|\[[^\[\]]*\]|'[^']*'|"[^"]*"|`[^`]*`/g, '');
+      const flat = body.replace(/\([^()]*\)|\[[^[\]]*\]|'[^']*'|"[^"]*"|`[^`]*`/g, '');
       for (const km of flat.matchAll(new RegExp(`(?:^|,)\\s*(?:['"]?)(${NAME})(?:['"]?)\\s*(?=[:,]|$)`, 'g'))) {
         out.define(km[1], { file: path, line: lineAt(text, m.index), kind: 'next-config' });
       }
