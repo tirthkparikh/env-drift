@@ -101,6 +101,28 @@ const TITLES = {
   unused: 'Unused: set or documented, but nothing reads it',
 };
 
+// GitHub Actions workflow commands: https://docs.github.com/actions/reference/workflow-commands-for-github-actions
+const ghData = s => String(s).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
+const ghProp = s => ghData(s).replace(/:/g, '%3A').replace(/,/g, '%2C');
+
+/**
+ * One annotation per issue, pinned to its first location, so drift shows up on the PR's
+ * "Files changed" tab. `prefix` turns scan-relative paths into repo-relative ones.
+ */
+export function formatAnnotations(report, { verbose = false, prefix = '' } = {}) {
+  const command = { error: 'error', warn: 'warning', info: 'notice' };
+  const lines = [];
+  for (const i of report.issues) {
+    if (i.level === 'info' && !verbose && i.type !== 'unused') continue;
+    const at = i.where.find(w => !w.startsWith('set in ')) ?? i.where[0]?.replace(/^set in /, '');
+    const m = at?.match(/^(.*?)(?::(\d+))?$/);
+    const props = [m && `file=${ghProp(prefix + m[1])}`, m?.[2] && `line=${m[2]}`, `title=${ghProp(`env-drift: ${TITLES[i.type] ?? i.type}`)}`].filter(Boolean);
+    const more = i.where.length > 1 ? ` (also ${i.where.slice(1, 4).join(', ')}${i.where.length > 4 ? ' and more' : ''})` : '';
+    lines.push(`::${command[i.level]} ${props.join(',')}::${ghData(`${i.name}: ${i.message}${more}`)}`);
+  }
+  return lines.join('\n');
+}
+
 export function formatReport(report, { color = true, verbose = false } = {}) {
   const c = (code, s) => (color ? `\x1b[${code}m${s}\x1b[0m` : s);
   const icon = { error: c(31, '✖'), warn: c(33, '!'), info: c(90, '·') };

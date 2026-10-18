@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 import { parseArgs } from 'node:util';
 import { readFile, appendFile, writeFile, access } from 'node:fs/promises';
-import { join, dirname, resolve } from 'node:path';
+import { join, dirname, resolve, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { scanProject, checkGitHub, formatReport } from '../src/node.js';
+import { scanProject, checkGitHub, formatReport, formatAnnotations } from '../src/node.js';
 import { exampleAdditions } from '../src/scan.js';
 
 const pkg = JSON.parse(await readFile(join(dirname(fileURLToPath(import.meta.url)), '../package.json'), 'utf8'));
@@ -23,6 +23,8 @@ Options
   --ignore <A,B,PREFIX_*> Variables to skip
   --exclude <path,…>      Folders or files to skip
   --json                  Machine-readable output
+  --annotations           Print GitHub Actions annotations (on by default in GitHub Actions)
+  --no-annotations        Don't print them
   --verbose               Show notes and explanations
 
 Config: .envdriftrc.json  { "ignore": ["SENTRY_*"], "exclude": ["legacy/"] }
@@ -35,6 +37,7 @@ try {
     allowPositionals: true,
     options: {
       ci: { type: 'boolean' }, strict: { type: 'boolean' }, fix: { type: 'boolean' }, json: { type: 'boolean' }, verbose: { type: 'boolean' },
+      annotations: { type: 'boolean' }, 'no-annotations': { type: 'boolean' },
       github: { type: 'string' }, ignore: { type: 'string' }, exclude: { type: 'string' },
       help: { type: 'boolean', short: 'h' }, version: { type: 'boolean', short: 'v' },
     },
@@ -71,6 +74,12 @@ try {
       // re-scan so the report reflects the fix
       Object.assign(report, await scanProject(root, { ignore: [...(rc.ignore ?? []), ...list(f.ignore)], exclude: [...(rc.exclude ?? []), ...list(f.exclude)], strict: f.strict }));
     } else if (!f.json) console.log('Nothing to add to the example file.\n');
+  }
+  // inside GitHub Actions, issues also appear as annotations on the PR diff
+  if (!f.json && !f['no-annotations'] && (f.annotations || process.env.GITHUB_ACTIONS === 'true')) {
+    const base = relative(process.env.GITHUB_WORKSPACE || process.cwd(), root).split(sep).join('/');
+    const notes = formatAnnotations(report, { verbose: f.verbose, prefix: base && !base.startsWith('..') ? `${base}/` : '' });
+    if (notes) console.log(notes);
   }
   if (f.json) console.log(JSON.stringify(report, null, 2));
   else console.log(formatReport(report, { color: !!process.stdout.isTTY && !process.env.NO_COLOR, verbose: f.verbose }));

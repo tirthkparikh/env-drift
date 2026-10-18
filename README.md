@@ -101,6 +101,8 @@ jobs:
 
 `--ci` exits with 1 on errors. Add `--strict` to fail on warnings too.
 
+Inside GitHub Actions, every issue is also printed as an annotation, so it shows up on the PR's **Files changed** tab next to the line that reads the variable. Paths are made relative to the repository root, so this works when you scan a subfolder too (`env-drift apps/web`). Use `--no-annotations` to turn them off, or `--annotations` to print them anywhere.
+
 ## Options
 
 ```text
@@ -112,6 +114,8 @@ env-drift [dir]
   --ignore <A,B,SENTRY_*> skip variables (wildcards at the end)
   --exclude <path,…>      skip folders or files
   --json                  machine-readable report
+  --annotations           GitHub Actions annotations (default inside GitHub Actions)
+  --no-annotations        turn them off
   --verbose               explanations and notes
 ```
 
@@ -131,8 +135,10 @@ const report = analyze([{ path: 'src/app.ts', content: '…' }, { path: '.env.ex
 ```
 
 ```js
-import { scanProject, formatReport } from '@tirthlabs/env-drift';
+import { scanProject, formatReport, formatAnnotations } from '@tirthlabs/env-drift';
 console.log(formatReport(await scanProject('.'), { color: false }));
+// GitHub Actions annotations; prefix makes paths repo-relative when you scanned a subfolder
+console.log(formatAnnotations(await scanProject('apps/web'), { prefix: 'apps/web/' }));
 ```
 
 ## License

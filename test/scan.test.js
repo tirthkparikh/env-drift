@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { analyze, parseDotenv, looksLikeRealSecret } from '../src/scan.js';
-import { scanProject, checkGitHub } from '../src/node.js';
+import { scanProject, checkGitHub, formatAnnotations } from '../src/node.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const APP = join(here, 'fixtures/app');
@@ -109,4 +109,31 @@ test('--github compares workflow secrets with the repo (mock API)', async () => 
     assert.deepEqual(byType(r, 'ci-variable-missing'), []);
     assert.equal(r.counts.error, 6);
   } finally { server.close(); }
+});
+
+test('annotations: one GitHub workflow command per issue, pinned to the first use', async () => {
+  const r = await scanProject(APP);
+  const out = formatAnnotations(r, { prefix: 'services/app/' }).split('\n');
+  const missing = r.issues.find(i => i.type === 'missing');
+  const line = out.find(l => l.includes(`::${missing.name}: `));
+  assert.match(line, /^::error file=services\/app\/[^,]+,line=\d+,title=env-drift%3A Missing%3A /);
+  assert.ok(out.every(l => /^::(error|warning|notice) /.test(l)));
+  assert.equal(out.filter(l => l.startsWith('::error ')).length, r.counts.error);
+  // values are escaped so a message can't break out of the command
+  const fake = { issues: [{ level: 'warn', type: 'empty', name: 'A', message: 'x\ny, 100%', where: ['a,b.env:3'] }] };
+  assert.equal(formatAnnotations(fake), '::warning file=a%2Cb.env,line=3,title=env-drift%3A Empty but required::A: x%0Ay, 100%25');
+});
+
+test('CLI prints annotations in GitHub Actions only, unless told otherwise', async () => {
+  const env = { ...process.env, GITHUB_ACTIONS: 'true', GITHUB_WORKSPACE: join(APP, '..') };
+  const inCI = (await run(process.execPath, [CLI, APP], { env })).stdout;
+  assert.match(inCI, /^::error file=app\//m);
+  assert.match(inCI, /errors?, /);
+  const off = (await run(process.execPath, [CLI, APP, '--no-annotations'], { env })).stdout;
+  assert.doesNotMatch(off, /^::/m);
+  const json = (await run(process.execPath, [CLI, APP, '--json'], { env })).stdout;
+  assert.doesNotMatch(json, /^::/m);
+  const local = { ...process.env }; delete local.GITHUB_ACTIONS;
+  assert.doesNotMatch((await run(process.execPath, [CLI, APP], { env: local })).stdout, /^::/m);
+  assert.match((await run(process.execPath, [CLI, APP, '--annotations'], { env: local })).stdout, /^::error /m);
 });
